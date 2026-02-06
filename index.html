@@ -601,6 +601,21 @@ map.on('overlayremove', updateSimPanel);
 updateSimPanel();
 
 
+function getFinalValues(p) {
+
+  const u = p._userImpact || { IVS:0, IEC:0, IPE:0 };
+
+  const IVS = Math.max(0, Math.min(1, p.IVS + u.IVS));
+  const IEC = Math.max(0, Math.min(1, p.IEC + u.IEC));
+  const IPE = Math.max(0, Math.min(1, p.IPE + u.IPE));
+
+  const DT = ((1 - IVS) + IEC + IPE) / 3;
+
+  return { IVS, IEC, IPE, DT };
+}
+
+
+
 function generateSimulationReport(){
 
   const projetoAtivo = map.hasLayer(projetoLayer);
@@ -618,10 +633,13 @@ function generateSimulationReport(){
     sumBase.IPE += b.IPE;
     sumBase.DT  += b.DT_score;
 
-    sumNow.IVS += p.IVS;
-    sumNow.IEC += p.IEC;
-    sumNow.IPE += p.IPE;
-    sumNow.DT  += p.DT_score;
+const final = getFinalValues(p);
+
+sumNow.IVS += final.IVS;
+sumNow.IEC += final.IEC;
+sumNow.IPE += final.IPE;
+sumNow.DT  += final.DT;
+
 
     count++;
   });
@@ -967,7 +985,7 @@ function updateAllDTLayers() {
 
       // 🔹 Atualizar valores finais
      const valueToPaint =
-       attr === "IVS" ? IVS :
+       attr === "IVS" ? (1 - IVS) :
        attr === "IEC" ? IEC :
        attr === "IPE" ? IPE :
        DT;
@@ -1634,3 +1652,6 @@ urbana, redução de pressão energética).
 
 </body>
 </html>
+
+
+
