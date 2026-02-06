@@ -22,6 +22,6 @@ Lisboa.
 
 ---
 
-Autor: Valter Ferreira  
+Autor: Valter Ferreira  e Tiago Coimbra
 CGIUL – Centro de Gestão e Inteligência Urbana de Lisboa  
 2026
