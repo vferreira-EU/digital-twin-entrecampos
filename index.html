@@ -616,6 +616,91 @@ function getFinalValues(p) {
 
 
 
+/* =========================
+   CLASSIFICAÇÃO DE VARIAÇÕES
+========================= */
+function classifyChange(v) {
+  if (v > 10) return "forte aumento";
+  if (v > 3)  return "aumento moderado";
+  if (v > 0)  return "ligeiro aumento";
+  if (v < -10) return "forte redução";
+  if (v < -3)  return "redução moderada";
+  if (v < 0)   return "ligeira redução";
+  return "estável";
+}
+
+
+
+/* =========================
+   MOTOR DE CONCLUSÕES
+========================= */
+function generateConclusions({
+  dIVS,
+  dIEC,
+  dIPE,
+  dDT,
+  projetoAtivo,
+  interventions
+}) {
+
+  let conclusions = [];
+
+  // 1️⃣ Leitura global
+  if (dDT > 5) {
+    conclusions.push(
+      "O cenário simulado conduz a um agravamento global da prioridade de intervenção, indicando um aumento das pressões urbanas face à situação de referência."
+    );
+  } else if (dDT < -5) {
+    conclusions.push(
+      "O cenário apresenta uma melhoria global das condições urbanas, com redução da prioridade média de intervenção."
+    );
+  } else {
+    conclusions.push(
+      "O cenário mantém um equilíbrio global próximo da situação de referência, com variações moderadas nos indicadores."
+    );
+  }
+
+  // 2️⃣ Verde vs Calor
+  if (dIVS > 0 && dIEC > 0) {
+    conclusions.push(
+      "Apesar do aumento de verde e sombra, a exposição ao calor também aumenta, sugerindo que os ganhos ambientais não compensam totalmente os efeitos da densificação urbana."
+    );
+  }
+
+  if (dIVS > 0 && dIEC < 0) {
+    conclusions.push(
+      "O reforço de áreas verdes demonstra um efeito mitigador eficaz sobre a exposição ao calor, contribuindo para a melhoria do conforto térmico urbano."
+    );
+  }
+
+  // 3️⃣ Pressão energética
+  if (dIPE > 8) {
+    conclusions.push(
+      "Verifica-se um aumento significativo da pressão energética, associado à intensificação da atividade urbana, edificação e mobilidade."
+    );
+  }
+
+  // 4️⃣ Projeto estruturante
+  if (projetoAtivo) {
+    conclusions.push(
+      "A presença de um projeto urbanístico estruturante introduz um impacto exógeno relevante, amplificando pressões ambientais e energéticas no território."
+    );
+  }
+
+  // 5️⃣ Intervenções do utilizador
+  if (interventions.length > 0) {
+    conclusions.push(
+      "As intervenções localizadas propostas pelo utilizador produzem efeitos mitigadores à escala local, mas o seu impacto agregado é limitado face a dinâmicas estruturais de maior escala."
+    );
+  }
+
+  return conclusions;
+}
+
+
+
+
+
 function generateSimulationReport(){
 
   const projetoAtivo = map.hasLayer(projetoLayer);
@@ -648,10 +733,11 @@ sumNow.DT  += final.DT;
   const diff = (now, base) =>
     ((now - base) / base * 100).toFixed(1);
 
-  const dIVS = diff(avg(sumNow.IVS), avg(sumBase.IVS));
-  const dIEC = diff(avg(sumNow.IEC), avg(sumBase.IEC));
-  const dIPE = diff(avg(sumNow.IPE), avg(sumBase.IPE));
-  const dDT  = diff(avg(sumNow.DT),  avg(sumBase.DT));
+const dIVS = parseFloat(diff(avg(sumNow.IVS), avg(sumBase.IVS)));
+const dIEC = parseFloat(diff(avg(sumNow.IEC), avg(sumBase.IEC)));
+const dIPE = parseFloat(diff(avg(sumNow.IPE), avg(sumBase.IPE)));
+const dDT  = parseFloat(diff(avg(sumNow.DT),  avg(sumBase.DT)));
+
 
   let html = "";
 
@@ -774,6 +860,27 @@ if (userProject.interventions.length > 0) {
     </ul>
   `;
 }
+
+
+/* =========================
+   CONCLUSÕES DO CENÁRIO
+========================= */
+
+const conclusions = generateConclusions({
+  dIVS,
+  dIEC,
+  dIPE,
+  dDT,
+  projetoAtivo,
+  interventions: userProject.interventions
+});
+
+html += "<h3>Conclusões do Cenário</h3>";
+
+conclusions.forEach(c => {
+  html += `<p>${c}</p>`;
+});
+
 
 
   /* =========================
@@ -1653,5 +1760,8 @@ urbana, redução de pressão energética).
 </body>
 </html>
 
+
+Fix IVS visualization logic (invert scale for benefit index)
+Corrects counter-intuitive behaviour when increasing green areas.
 
 
