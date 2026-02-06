@@ -1,0 +1,1636 @@
+<!--
+Digital Twin Piloto – Entrecampos
+Autor: Valter Ferreira
+Organização: CGIUL – Centro de Gestão e Inteligência Urbana de Lisboa
+Ano: 2026
+
+Nota:
+Este código suporta um protótipo exploratório de Digital Twin urbano,
+destinado a apoio à decisão e simulação de cenários.
+-->
+
+
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<title>Digital Twin – Entrecampos - Eixo Av. República / Av. 5 de Outubro</title>
+
+<link rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+html, body { height:100%; margin:0; font-family: Arial; }
+#map { height:100%; }
+
+.title {
+  position:absolute; top:10px; left:50px; z-index:1000;
+  background:white; padding:10px;
+  box-shadow:0 0 6px rgba(0,0,0,.3);
+}
+
+.legend {
+  background:white; padding:10px;
+  box-shadow:0 0 6px rgba(0,0,0,.3);
+  line-height:1.4em;
+}
+
+.legend i {
+  width:16px; height:16px; float:left;
+  margin-right:8px; opacity:.8;
+}
+
+#simPanel {
+  position:absolute;
+  top:250px;
+  right:10px;
+  z-index:1100;
+  background:white;
+  padding:12px;
+  width:280px;
+  box-shadow:0 0 6px rgba(0,0,0,.3);
+  display:none;
+}
+</style>
+</head>
+
+<body>
+
+<div class="title" style="
+  display:flex;
+  align-items:center;
+  gap:12px;
+  background:#0055A4;   /* Azul PGIL */
+  color:white;
+  padding:10px 14px;
+  border-radius:6px;
+">
+
+  <!-- LOGO CGIUL -->
+  <img src="BRANCO_recortado.png.png"
+       alt="CGIUL"
+       style="height:38px;">
+
+  <!-- TEXTO -->
+  <div>
+    <b>Digital Twin Piloto Entrecampos</b><br>
+    <small style="opacity:0.9;">
+      Eixo – Av. República / Av. 5 de Outubro
+    </small>
+  </div>
+
+</div>
+
+
+
+
+<div id="map"></div>
+
+<!-- Painel de Simulação -->
+<div id="simPanel">
+<b>Simuladores</b><br>
+<small style="color:#555">
+Os simuladores representam intervenções urbanas.<br>
+A camada ativa apenas define a visualização.
+</small>
+
+<hr>
+
+<label>
+  🌳 Área Verde Urbana<br>
+  <input type="range" min="-30" max="30" value="0" step="5" id="greenSlider">
+</label>
+<div>Variação: <span id="greenValue">0%</span></div>
+
+<hr>
+
+<label>
+  🏘️ Edificado (fogos)<br>
+  <input type="range" min="-20" max="20" value="0" step="5" id="housingSlider">
+</label>
+
+<hr>
+
+<label>
+  ⚡ Pressão Energética<br>
+  <input type="range" min="-25" max="25" value="0" step="5" id="energySlider">
+</label>
+
+<hr>
+
+<label>
+  🟡 Eficiência Urbana<br>
+  <input type="range" min="0" max="30" value="0" step="5" id="efficiencySlider">
+</label>
+
+
+<hr>
+
+<button id="resetBtn" style="
+  width:100%;
+  padding:8px;
+  background:#eee;
+  border:1px solid #999;
+  cursor:pointer;
+">
+🔄 Reset cenário
+</button>
+
+
+<hr>
+
+<button id="reportBtn" style="
+  width:100%;
+  padding:8px;
+  background:#f5f5f5;
+  border:1px solid #999;
+  cursor:pointer;
+">
+📄 Gerar relatório do cenário
+</button>
+
+
+<hr>
+
+<b>Projeto do Utilizador</b>
+
+<button id="userProjectToggle" style="
+  width:100%;
+  padding:8px;
+  background:#e3f2fd;
+  border:1px solid #999;
+  cursor:pointer;
+  margin-top:6px;
+">
+▶️ Ativar Projeto do Utilizador
+</button>
+
+<button id="userProjectReset" style="
+  width:100%;
+  padding:8px;
+  background:#fff3e0;
+  border:1px solid #999;
+  cursor:pointer;
+  margin-top:6px;
+">
+🗑️ Limpar Projeto do Utilizador
+</button>
+
+
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="dt_data.js"></script>
+<script src="edificado.js"></script>
+
+<script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+
+
+<!--
+Core logic & simulation model
+Valter Ferreira – CGIUL (2026)
+-->
+
+
+
+
+<script>
+
+/* =========================
+   MAPA BASE
+========================= */
+const map = L.map('map');
+
+
+
+/* =========================
+   PANES (ORDEM DE DESENHO)
+========================= */
+map.createPane("basePane");   // contexto, projetos
+map.createPane("dtPane");     // leitura analítica
+
+map.getPane("basePane").style.zIndex = 400;
+map.getPane("dtPane").style.zIndex = 500;
+
+map.createPane("userInteractionPane");
+map.getPane("userInteractionPane").style.zIndex = 650;
+
+
+/* =========================
+   MAPAS BASE
+========================= */
+
+const baseMaps = {
+
+  "Mapa (Cor)": L.tileLayer(
+    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { attribution: "© OpenStreetMap" }
+  ),
+
+  "Mapa (PB)": L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+    { attribution: "© OpenStreetMap © CARTO" }
+  ),
+
+  "Satélite": L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/" +
+    "World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { attribution: "© Esri" }
+  )
+
+};
+
+
+baseMaps["Mapa (PB)"].addTo(map);
+
+
+
+
+
+/* =========================
+   ESTADO BASE + IMPACTO DO UTILIZADOR
+========================= */
+DT_DATA.features.forEach(f => {
+
+  // Estado base imutável
+  f.properties._base = {
+    IVS: f.properties.IVS,
+    IEC: f.properties.IEC,
+    IPE: f.properties.IPE,
+    DT_score: f.properties.DT_score
+  };
+
+  // Impacto acumulado do Projeto do Utilizador
+  f.properties._userImpact = {
+    IVS: 0,
+    IEC: 0,
+    IPE: 0
+  };
+
+});
+
+
+
+/* =========================
+   MODELO DE INTERVENÇÕES DO UTILIZADOR
+========================= */
+
+const USER_INTERVENTION_MODEL = {
+
+  ev_normal: {
+    radius: 100,
+    impact: { IPE: 0.08, IEC: 0.04 }
+  },
+
+  ev_fast: {
+    radius: 100,
+    impact: { IPE: 0.15, IEC: 0.08 }
+  },
+
+  tree_small: {
+    radius: 30,
+    impact: { IVS: 0.03, IEC: -0.04 }
+  },
+
+  tree_medium: {
+    radius: 60,
+    impact: { IVS: 0.06, IEC: -0.08 }
+  },
+
+  tree_large: {
+    radius: 100,
+    impact: { IVS: 0.10, IEC: -0.15 }
+  },
+
+  pv: {
+    radius: 80,
+    impact: { IPE: -0.10 }
+  },
+
+  building: {
+    dynamicRadius: true,
+    impact: { IVS: -0.05, IEC: 0.10, IPE: 0.12 }
+  }
+
+};
+
+const USER_INTERVENTION_LABELS = {
+  ev_normal: "🔌 Carregador EV normal",
+  ev_fast:   "⚡ Carregador EV rápido",
+
+  tree_small:  "🌳 Árvore – pequeno porte",
+  tree_medium: "🌳 Árvore – médio porte",
+  tree_large:  "🌳 Árvore – grande porte",
+
+  pv: "☀️ Instalação fotovoltaica",
+  building: "🏗️ Edificação"
+};
+
+
+
+
+/* =========================
+   POIs
+========================= */
+const pois = [
+  {
+    nome: "Câmara Municipal de Lisboa",
+    coords: [38.7491504080554, -9.149865658442165],
+    url: "https://informacoeseservicos.lisboa.pt/contactos/diretorio-da-cidade/camara-municipal-de-lisboa-edificio-central-do-campo-grande"
+  },
+  {
+    nome: "Estação Ferroviária de Entrecampos",
+    coords: [38.74457389838769, -9.148692897943125],
+    url: "https://www.cp.pt/pt/pesquisa-estacao-detalhe/94-66050"
+  },
+  {
+    nome: "Biblioteca Nacional de Portugal",
+    coords: [38.75102520784059, -9.151872115308594],
+    url: "https://www.bnportugal.gov.pt/"
+  }
+];
+
+const poiLayer = L.layerGroup();
+pois.forEach(poi => {
+  poiLayer.addLayer(
+    L.marker(poi.coords).bindPopup(
+      `<b>${poi.nome}</b><br>
+       <a href="${poi.url}" target="_blank">Abrir página</a>`
+    )
+  );
+});
+
+/* =========================
+   EDIFICADO
+========================= */
+const edificadoLayer = L.geoJSON(EDIFICADO_DATA,{
+  pane: "basePane",
+  style:{
+    color:"#2b6cb0",
+    weight:0.5,
+    fillColor:"#3182ce",
+    fillOpacity:0.4
+  }
+});
+
+
+
+/* =========================
+   PROJETO – ENTRECAMPOS (CENÁRIO)
+========================= */
+const projetoEntrecampos = {
+  "type": "Feature",
+  "properties": {
+    "nome": "Projeto – Entrecampos",
+    "comercio_m2": 20000,
+    "lojas": 55,
+    "escritorios_m2": 140000,
+    "utilizadores": 14000,
+    "habitacao_m2": 28000,
+    "apartamentos": 249
+  },
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [[
+      [-9.150138657807949, 38.747927947193105], // NW
+      [-9.148894482976786, 38.748135031839986], // NE
+      [-9.14808273476377,  38.74502869906744],  // SE
+      [-9.149410360345806, 38.744839356319076], // SW
+      [-9.150138657807949, 38.747927947193105]
+    ]]
+  }
+};
+
+
+const projetoLayer = L.geoJSON(projetoEntrecampos, {
+  pane: "basePane",
+  style: {
+    color: "#6a1b9a",
+    weight: 2,
+    fillColor: "#9c27b0",
+    fillOpacity: 0.35,
+    dashArray: "6,4",
+
+  },
+  onEachFeature: (f, l) => {
+    l.bindPopup(`
+      <b>${f.properties.nome}</b><br><br>
+      🏬 Comércio: ${f.properties.comercio_m2.toLocaleString()} m²<br>
+      🏢 Escritórios: ${f.properties.escritorios_m2.toLocaleString()} m²<br>
+      👥 Utilizadores: ${f.properties.utilizadores.toLocaleString()}<br>
+      🏠 Habitação: ${f.properties.apartamentos} fogos
+    `);
+  }
+});
+
+
+let projetoAtivo = false;
+
+map.on('overlayadd', e => {
+  if (e.layer === projetoLayer) {
+    projetoAtivo = true;
+    applyProjetoImpact();
+  }
+});
+
+map.on('overlayremove', e => {
+  if (e.layer === projetoLayer) {
+    projetoAtivo = false;
+    resetProjetoImpact();
+  }
+});
+
+
+
+
+/* =========================
+   ESCALA E LAYERS
+========================= */
+function scale(v){
+  return v>0.8?'#b30000':
+         v>0.6?'#e34a33':
+         v>0.4?'#fdbb84':
+         v>0.2?'#a1d99b':'#006d2c';
+}
+
+function makeLayer(attr){
+  return L.geoJSON(DT_DATA,{
+    pane: "dtPane",
+    style:f=>({
+      fillColor: scale(f.properties[attr]),
+      fillOpacity:0.75,
+      weight:0
+    }),
+    onEachFeature:(f,l)=>{
+      l.bindPopup(
+        `<b>${attr}</b><br>Valor: ${f.properties[attr].toFixed(2)}`
+      );
+    }
+  });
+}
+
+const layers = {
+  "Índice Composto (Prioridade)": makeLayer("DT_score"),
+  "Verde & Sombra": makeLayer("IVS"),
+  "Exposição ao Calor": makeLayer("IEC"),
+  "Pressão Energética": makeLayer("IPE"),
+  "Edificado": edificadoLayer,
+  "Pontos de Interesse": poiLayer,
+  "Projeto – Entrecampos": projetoLayer,
+
+};
+
+
+
+/* =========================
+   🔓 CONTROLO DE INTERAÇÃO DAS CAMADAS DT
+========================= */
+
+function setDTLayersInteractive(enabled) {
+  [
+    "Índice Composto (Prioridade)",
+    "Verde & Sombra",
+    "Exposição ao Calor",
+    "Pressão Energética"
+  ].forEach(name => {
+    const layer = layers[name];
+    if (!layer) return;
+
+    layer.eachLayer(l => {
+      if (l.getElement && l.getElement()) {
+        l.getElement().style.pointerEvents = enabled ? "auto" : "none";
+      }
+    });
+  });
+}
+
+
+
+/* =========================
+   ATIVAÇÃO INICIAL
+========================= */
+let activeLayer = layers["Índice Composto (Prioridade)"];
+activeLayer.addTo(map);
+map.fitBounds(activeLayer.getBounds());
+
+L.control.layers(baseMaps, layers, { collapsed: false }).addTo(map);
+
+
+/* =========================
+   PROJETO DO UTILIZADOR
+========================= */
+
+let userProjectActive = false;
+
+const userProject = {
+  interventions: []
+};
+
+const userInterventionsLayer = L.layerGroup({
+  pane: "userInteractionPane"
+}).addTo(map);
+
+
+let pendingUserLatLng = null;
+
+
+/* =========================
+   PROJETO DO UTILIZADOR – FEEDBACK VISUAL
+========================= */
+
+function addUserInterventionMarker(latlng) {
+
+  const marker = L.circleMarker(latlng, {
+    radius: 6,
+    color: "#ff9800",
+    fillColor: "#ffcc80",
+    fillOpacity: 0.9,
+    weight: 2,
+    pane: "userInteractionPane"
+  });
+
+  marker.bindPopup(`
+    <b>Projeto do utilizador</b><br>
+    Intervenção registada
+  `);
+
+  userInterventionsLayer.addLayer(marker);
+
+  userProject.interventions.push({
+    type: "generic",
+    latlng
+  });
+}
+
+
+
+
+
+
+
+
+/* =========================
+   VISIBILIDADE DO SIMULADOR
+========================= */
+function isSimulationAllowed(){
+  const forbidden = [edificadoLayer, poiLayer];
+  let allowed = false;
+
+  map.eachLayer(l=>{
+    if (Object.values(layers).includes(l) && !forbidden.includes(l)){
+      allowed = true;
+    }
+  });
+  return allowed;
+}
+
+function updateSimPanel(){
+  document.getElementById("simPanel").style.display =
+    isSimulationAllowed() ? "block" : "none";
+  if (!isSimulationAllowed()) resetSimulation();
+}
+
+map.on('overlayadd', e=>{
+  activeLayer = e.layer;
+  updateSimPanel();
+});
+map.on('overlayremove', updateSimPanel);
+updateSimPanel();
+
+
+function generateSimulationReport(){
+
+  const projetoAtivo = map.hasLayer(projetoLayer);
+
+  let sumBase = { IVS:0, IEC:0, IPE:0, DT:0 };
+  let sumNow  = { IVS:0, IEC:0, IPE:0, DT:0 };
+  let count = 0;
+
+  DT_DATA.features.forEach(f => {
+    const p = f.properties;
+    const b = p._base;
+
+    sumBase.IVS += b.IVS;
+    sumBase.IEC += b.IEC;
+    sumBase.IPE += b.IPE;
+    sumBase.DT  += b.DT_score;
+
+    sumNow.IVS += p.IVS;
+    sumNow.IEC += p.IEC;
+    sumNow.IPE += p.IPE;
+    sumNow.DT  += p.DT_score;
+
+    count++;
+  });
+
+  const avg = v => (v / count);
+  const diff = (now, base) =>
+    ((now - base) / base * 100).toFixed(1);
+
+  const dIVS = diff(avg(sumNow.IVS), avg(sumBase.IVS));
+  const dIEC = diff(avg(sumNow.IEC), avg(sumBase.IEC));
+  const dIPE = diff(avg(sumNow.IPE), avg(sumBase.IPE));
+  const dDT  = diff(avg(sumNow.DT),  avg(sumBase.DT));
+
+  let html = "";
+
+  /* =========================
+     PROJETO ATIVO
+  ========================= */
+
+  if (projetoAtivo) {
+    html +=
+      "<p><b>Projeto ativo:</b> Projeto – Entrecampos</p>" +
+      "<p>O cenário inclui uma operação urbanística estruturante " +
+      "com impactos significativos sobre os indicadores urbanos.</p>";
+  }
+
+  /* =========================
+     POLÍTICAS SIMULADAS
+  ========================= */
+
+  html +=
+    "<h3>Políticas simuladas</h3>" +
+    "<ul>" +
+    "<li>Área verde: " + slider.value + "%</li>" +
+    "<li>Edificado (fogos): " + (housingSlider.value || 0) + "%</li>" +
+    "<li>Pressão energética: " + (energySlider.value || 0) + "%</li>" +
+    "<li>Eficiência urbana: " + (efficiencySlider.value || 0) + "%</li>" +
+    "</ul>";
+
+  /* =========================
+     IMPACTO MÉDIO
+  ========================= */
+
+  html +=
+    "<h3>Impacto médio estimado</h3>" +
+    "<ul>" +
+    "<li>IVS (Verde & Sombra): " + dIVS + "%</li>" +
+    "<li>IEC (Exposição ao Calor): " + dIEC + "%</li>" +
+    "<li>IPE (Pressão Energética): " + dIPE + "%</li>" +
+    "<li>Índice Composto: " + dDT + "%</li>" +
+    "</ul>";
+
+
+
+
+/* =========================
+   Intervenções do Utilizador
+========================= */
+
+if (userProject.interventions.length > 0) {
+
+  const interventionsHTML =
+    userProject.interventions
+      .map(i => {
+
+        const label =
+          USER_INTERVENTION_LABELS[i.type] || i.type;
+
+        return `
+          <li>
+            <b>${label}</b>
+            — raio ${Math.round(i.radius)} m
+          </li>
+        `;
+      })
+      .join("");
+
+  html += `
+    <h3>Intervenções do Utilizador</h3>
+    <ul>
+      ${interventionsHTML}
+    </ul>
+  `;
+}
+
+
+
+/* =========================
+   Métricas agregadas – Projeto do Utilizador
+========================= */
+
+if (userProject.interventions.length > 0) {
+
+  const metrics = {
+    ev_normal: 0,
+    ev_fast: 0,
+    tree_small: 0,
+    tree_medium: 0,
+    tree_large: 0,
+    pv: 0,
+    building_count: 0,
+    building_area: 0
+  };
+
+  userProject.interventions.forEach(i => {
+    if (i.type in metrics) {
+      metrics[i.type]++;
+    }
+
+    if (i.type === "building") {
+      metrics.building_count++;
+      metrics.building_area += i.area || 0;
+    }
+  });
+
+  html += `
+    <h3>Resumo das Intervenções do Utilizador</h3>
+    <ul>
+      <li>🔌 Carregadores EV normais: <b>${metrics.ev_normal}</b></li>
+      <li>⚡ Carregadores EV rápidos: <b>${metrics.ev_fast}</b></li>
+
+      <li>🌳 Árvores pequeno porte: <b>${metrics.tree_small}</b></li>
+      <li>🌳 Árvores médio porte: <b>${metrics.tree_medium}</b></li>
+      <li>🌳 Árvores grande porte: <b>${metrics.tree_large}</b></li>
+
+      <li>☀️ Instalações fotovoltaicas: <b>${metrics.pv}</b></li>
+
+      <li>🏗️ Edificações: <b>${metrics.building_count}</b></li>
+      <li>📐 Área total edificada: <b>${metrics.building_area.toLocaleString()} m²</b></li>
+
+      <li>📌 Total de intervenções: <b>${userProject.interventions.length}</b></li>
+    </ul>
+  `;
+}
+
+
+  /* =========================
+     NOTA FINAL
+  ========================= */
+
+  html +=
+    "<p><i>Nota:</i> Os valores representam variações relativas médias " +
+    "face à situação de referência, com base num modelo exploratório.</p>";
+
+  document.getElementById("reportContent").innerHTML = html;
+  document.getElementById("reportModal").style.display = "block";
+}
+
+
+function exportReportToPDF() {
+
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF("p", "mm", "a4");
+
+  // Título
+  pdf.setFontSize(16);
+  pdf.text("Digital Twin – Relatório de Simulação", 20, 20);
+
+  pdf.setFontSize(10);
+  pdf.text(
+    "Entrecampos – Eixo Av. República / Av. 5 de Outubro",
+    20,
+    27
+  );
+  pdf.text(
+    "Data: " + new Date().toLocaleDateString(),
+    20,
+    32
+  );
+
+  // Captura do mapa atual (área visível)
+  leafletImage(map, function(err, canvas) {
+
+    if (err) {
+      alert("Erro ao capturar o mapa.");
+      return;
+    }
+
+    const imgData = canvas.toDataURL("image/png");
+
+    // Inserir mapa no PDF
+    pdf.addImage(imgData, "PNG", 20, 38, 170, 90);
+
+    // Texto do relatório
+    const reportText = document
+      .getElementById("reportContent")
+      .innerText;
+
+    pdf.setFontSize(11);
+    pdf.text("Resumo do cenário:", 20, 135);
+
+    pdf.setFontSize(10);
+    pdf.text(
+      pdf.splitTextToSize(reportText, 170),
+      20,
+      142
+    );
+
+    pdf.save("relatorio_digital_twin_entrecampos.pdf");
+  });
+}
+
+
+/* =========================
+   SIMULADORES – APLICADOS AO MODELO (NÃO AO UI)
+========================= */
+
+const slider = document.getElementById("greenSlider");
+const label = document.getElementById("greenValue");
+const housingSlider = document.getElementById("housingSlider");
+const energySlider  = document.getElementById("energySlider");
+const efficiencySlider = document.getElementById("efficiencySlider");
+
+
+/* === ÁREA VERDE === */
+function applyGreenSimulation(){
+
+  const delta = slider.value / 100;
+  label.innerText = slider.value + "%";
+
+  DT_DATA.features.forEach(f => {
+    const p = f.properties;
+    const b = p._base;
+
+    p.IVS = Math.min(1, b.IVS * (1 + delta));
+    p.IEC = Math.max(0, b.IEC * (1 - delta * 0.6));
+    p.IPE = b.IPE;
+
+    p.DT_score = ((1 - p.IVS) + p.IEC + p.IPE) / 3;
+  });
+
+  updateAllDTLayers();
+}
+
+slider.addEventListener("input", applyGreenSimulation);
+
+
+/* === EDIFICADO (FOGOS) === */
+function applyHousingSimulation(){
+
+  const delta = housingSlider.value / 100;
+
+  DT_DATA.features.forEach(f => {
+    const p = f.properties;
+    const b = p._base;
+
+    p.IVS = b.IVS;
+    p.IEC = Math.min(1, b.IEC * (1 + delta * 0.5));
+    p.IPE = Math.min(1, b.IPE * (1 + delta * 0.6));
+
+    p.DT_score = ((1 - p.IVS) + p.IEC + p.IPE) / 3;
+  });
+
+  updateAllDTLayers();
+}
+
+housingSlider.addEventListener("input", applyHousingSimulation);
+
+
+/* === PRESSÃO ENERGÉTICA === */
+function applyEnergySimulation(){
+
+  const delta = energySlider.value / 100;
+
+  DT_DATA.features.forEach(f => {
+    const p = f.properties;
+    const b = p._base;
+
+    p.IVS = b.IVS;
+    p.IPE = Math.min(1, Math.max(0, b.IPE * (1 + delta)));
+    p.IEC = Math.min(1, Math.max(0, b.IEC * (1 + delta * 0.4)));
+
+    p.DT_score = ((1 - p.IVS) + p.IEC + p.IPE) / 3;
+  });
+
+  updateAllDTLayers();
+}
+
+energySlider.addEventListener("input", applyEnergySimulation);
+
+
+/* === EFICIÊNCIA URBANA === */
+function applyEfficiencySimulation(){
+
+  const delta = efficiencySlider.value / 100;
+
+  DT_DATA.features.forEach(f => {
+    const p = f.properties;
+    const b = p._base;
+
+    p.IVS = b.IVS;
+    p.IEC = Math.max(0, b.IEC * (1 - delta));
+    p.IPE = Math.max(0, b.IPE * (1 - delta));
+
+    p.DT_score = ((1 - p.IVS) + p.IEC + p.IPE) / 3;
+  });
+
+  updateAllDTLayers();
+}
+
+efficiencySlider.addEventListener("input", applyEfficiencySimulation);
+
+
+
+
+
+/* =========================
+   🔧 FUNÇÃO UTILITÁRIA
+   Atualizar TODAS as camadas DT
+========================= */
+function updateAllDTLayers() {
+
+  [
+    "Índice Composto (Prioridade)",
+    "Verde & Sombra",
+    "Exposição ao Calor",
+    "Pressão Energética"
+  ].forEach(name => {
+
+    const layer = layers[name];
+    if (!layer || !layer.eachLayer) return;
+
+    const attr =
+      name === "Verde & Sombra" ? "IVS" :
+      name === "Exposição ao Calor" ? "IEC" :
+      name === "Pressão Energética" ? "IPE" :
+      "DT_score";
+
+    layer.eachLayer(l => {
+
+      const p = l.feature.properties;
+      const b = p._base;
+      const u = p._userImpact || { IVS:0, IEC:0, IPE:0 };
+
+      // 🔹 Valor final com impacto do utilizador
+      const IVS = Math.max(0, Math.min(1, p.IVS + u.IVS));
+      const IEC = Math.max(0, Math.min(1, p.IEC + u.IEC));
+      const IPE = Math.max(0, Math.min(1, p.IPE + u.IPE));
+
+      // 🔹 Recalcular índice composto
+      const DT =
+        ((1 - IVS) + IEC + IPE) / 3;
+
+      // 🔹 Atualizar valores finais
+     const valueToPaint =
+       attr === "IVS" ? IVS :
+       attr === "IEC" ? IEC :
+       attr === "IPE" ? IPE :
+       DT;
+
+    l.setStyle({
+      fillColor: scale(valueToPaint)
+      });
+
+
+    });
+  });
+}
+
+
+
+
+
+
+/* =========================
+   PROJETO DO UTILIZADOR – CLIQUE NO MAPA
+========================= */
+
+map.on("click", e => {
+
+  if (!userProjectActive) return;
+
+  pendingUserLatLng = e.latlng;
+  document.getElementById("userProjectModal").style.display = "block";
+
+});
+
+
+
+/* =========================
+   PROJETO – IMPLEMENTACAO
+========================= */
+
+function applyUserIntervention(type, latlng) {
+
+  const def = USER_INTERVENTION_MODEL[type];
+  if (!def) return;
+
+  // Raio
+  let radius = def.radius || 80;
+
+  if (def.dynamicRadius && type === "building") {
+    const area =
+      parseInt(document.getElementById("buildingArea").value) || 1000;
+    radius = Math.sqrt(area) * 2;
+  }
+
+  // Marker
+  const marker = L.circleMarker(latlng, {
+    radius: 7,
+    color: "#333",
+    fillColor: "#ffd54f",
+    fillOpacity: 0.9,
+    weight: 2,
+    pane: "userInteractionPane"
+  }).addTo(userInterventionsLayer);
+
+  // Buffer
+  const buffer = L.circle(latlng, {
+    radius,
+    pane: "userInteractionPane",
+    interactive: false,
+    opacity: 0.6,
+    fillOpacity: 0.15
+  }).addTo(userInterventionsLayer);
+
+  // Registo lógico
+  userProject.interventions.push({
+    type,
+    latlng,
+    radius,
+  area: type === "building"
+    ? parseInt(document.getElementById("buildingArea").value) || 0
+    : 0
+
+  });
+
+  // Impacto espacial
+  layers["Índice Composto (Prioridade)"].eachLayer(l => {
+
+    if (!buffer.getBounds().intersects(l.getBounds())) return;
+
+    const ui = l.feature.properties._userImpact;
+
+    Object.entries(def.impact).forEach(([k, v]) => {
+      ui[k] = (ui[k] || 0) + v;
+    });
+
+  });
+
+  updateAllDTLayers();
+}
+
+
+
+
+
+/* =========================
+   PROJETO – IMPACTO
+========================= */
+
+
+function applyProjetoImpact(){
+
+  const targetLayers = [
+    "Índice Composto (Prioridade)",
+    "Verde & Sombra",
+    "Exposição ao Calor",
+    "Pressão Energética"
+  ];
+
+  targetLayers.forEach(name => {
+
+    const layer = layers[name];
+    if (!layer || !layer.eachLayer) return;
+
+    layer.eachLayer(l => {
+
+      if (!l.getBounds().intersects(projetoLayer.getBounds())) return;
+
+      const p = l.feature.properties;
+      const b = p._base;
+
+      // Impactos do Projeto – Entrecampos
+      p.IVS = Math.max(0, b.IVS * 0.85);
+      p.IEC = Math.min(1, b.IEC * 1.25);
+      p.IPE = Math.min(1, b.IPE * 1.35);
+
+      p.DT_score = ((1 - p.IVS) + p.IEC + p.IPE) / 3;
+    });
+
+  });
+
+  updateAllDTLayers();
+}
+
+
+
+function resetProjetoImpact(){
+
+  const targetLayers = [
+    "Índice Composto (Prioridade)",
+    "Verde & Sombra",
+    "Exposição ao Calor",
+    "Pressão Energética"
+  ];
+
+  targetLayers.forEach(name => {
+
+    const layer = layers[name];
+    if (!layer || !layer.eachLayer) return;
+
+    layer.eachLayer(l => {
+      const p = l.feature.properties;
+      const b = p._base;
+
+      p.IVS = b.IVS;
+      p.IEC = b.IEC;
+      p.IPE = b.IPE;
+      p.DT_score = b.DT_score;
+    });
+
+  });
+
+  updateAllDTLayers();
+}
+
+
+
+function resetSimulation(){
+
+  // Reset sliders
+  slider.value = 0;
+  label.innerText = "0%";
+
+  if (typeof housingSlider !== "undefined") housingSlider.value = 0;
+  if (typeof energySlider  !== "undefined") energySlider.value  = 0;
+  if (typeof efficiencySlider !== "undefined") efficiencySlider.value = 0;
+
+  // Reset valores BASE em TODAS as features
+  DT_DATA.features.forEach(f => {
+    const p = f.properties;
+    const b = p._base;
+
+    p.IVS = b.IVS;
+    p.IEC = b.IEC;
+    p.IPE = b.IPE;
+    p.DT_score = b.DT_score;
+  });
+
+  // 🔧 redesenhar TODAS as camadas DT
+  updateAllDTLayers();
+}
+
+
+document.getElementById("resetBtn")
+  .addEventListener("click", resetSimulation);
+
+
+document.getElementById("userProjectToggle")
+  .addEventListener("click", () => {
+
+    userProjectActive = !userProjectActive;
+
+    const btn = document.getElementById("userProjectToggle");
+
+    if (userProjectActive) {
+      btn.innerText = "⏹️ Desativar Projeto do Utilizador";
+
+      // 🔓 libertar clique no mapa
+      setDTLayersInteractive(false);
+
+      map.getContainer().style.cursor = "crosshair";
+
+    } else {
+      btn.innerText = "▶️ Ativar Projeto do Utilizador";
+
+      // 🔒 voltar ao comportamento normal
+      setDTLayersInteractive(true);
+
+      map.getContainer().style.cursor = "";
+    }
+  });
+
+
+document.getElementById("userProjectReset")
+  .addEventListener("click", () => {
+
+    // 1️⃣ Limpar estado lógico do projeto
+    userProject.interventions = [];
+
+    // 2️⃣ Limpar markers / buffers visuais
+    userInterventionsLayer.clearLayers();
+
+    // 3️⃣ Zerar impacto do utilizador em TODAS as features
+    DT_DATA.features.forEach(f => {
+      f.properties._userImpact = {
+        IVS: 0,
+        IEC: 0,
+        IPE: 0
+      };
+    });
+
+    // 4️⃣ Repor valores base + outros cenários ativos
+    DT_DATA.features.forEach(f => {
+      const p = f.properties;
+      const b = p._base;
+
+      p.IVS = b.IVS;
+      p.IEC = b.IEC;
+      p.IPE = b.IPE;
+      p.DT_score = b.DT_score;
+    });
+
+    // 5️⃣ Reaplicar Projeto Entrecampos se estiver ativo
+    if (projetoAtivo) {
+      applyProjetoImpact();
+    }
+
+    // 6️⃣ Redesenhar TODAS as camadas
+    updateAllDTLayers();
+  });
+
+
+
+/* =========================
+   LEGENDA
+========================= */
+const legend = L.control({position:'bottomleft'});
+legend.onAdd = ()=>{
+  const d = L.DomUtil.create('div','legend');
+  d.innerHTML = `
+  <b>Prioridade de intervenção</b><br>
+  <i style="background:#006d2c"></i> Baixa<br>
+  <i style="background:#a1d99b"></i> Moderada<br>
+  <i style="background:#fdbb84"></i> Elevada<br>
+  <i style="background:#e34a33"></i> Muito elevada<br>
+  <i style="background:#b30000"></i> Crítica`;
+  return d;
+};
+
+
+// Botão de Metainformação (acima da legenda)
+const metaInfoControl = L.control({ position: 'bottomright' });
+
+metaInfoControl.onAdd = function () {
+  const div = L.DomUtil.create('div', 'legend');
+  div.style.marginBottom = "8px";
+  div.style.cursor = "pointer";
+  div.innerHTML = `<b>ℹ️ Metodologia e métricas</b>`;
+
+  // Evitar que o clique mexa no mapa
+  L.DomEvent.disableClickPropagation(div);
+
+  div.addEventListener("click", () => {
+    document.getElementById("metaModal").style.display = "block";
+  });
+
+  return div;
+};
+
+metaInfoControl.addTo(map);
+
+
+legend.addTo(map);
+
+
+document.addEventListener("DOMContentLoaded", () => {
+
+  const metaModal = document.getElementById("metaModal");
+  const closeBtn  = document.getElementById("closeMeta");
+
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      metaModal.style.display = "none";
+    });
+  }
+
+  if (metaModal) {
+    metaModal.addEventListener("click", e => {
+      if (e.target === metaModal) {
+        metaModal.style.display = "none";
+      }
+    });
+  }
+
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+
+  const confirmBtn = document.getElementById("confirmUserProject");
+  const cancelBtn  = document.getElementById("cancelUserProject");
+  const modal      = document.getElementById("userProjectModal");
+
+  if (confirmBtn) {
+    confirmBtn.addEventListener("click", () => {
+
+      const type = document.querySelector(
+        'input[name="userIntervention"]:checked'
+      ).value;
+
+      applyUserIntervention(type, pendingUserLatLng);
+
+      pendingUserLatLng = null;
+      modal.style.display = "none";
+    });
+  }
+
+  if (cancelBtn) {
+    cancelBtn.addEventListener("click", () => {
+      pendingUserLatLng = null;
+      modal.style.display = "none";
+    });
+  }
+
+});
+
+
+
+document.addEventListener("DOMContentLoaded", () => {
+
+  // Botão para gerar relatório
+  const reportBtn = document.getElementById("reportBtn");
+  const reportModal = document.getElementById("reportModal");
+  const closeReport = document.getElementById("closeReport");
+  const exportBtn   = document.getElementById("exportPDF");
+
+  if (reportBtn) {
+    reportBtn.addEventListener("click", generateSimulationReport);
+  }
+
+  if (closeReport) {
+    closeReport.addEventListener("click", () => {
+      reportModal.style.display = "none";
+    });
+  }
+
+  if (exportBtn) {
+    exportBtn.addEventListener("click", exportReportToPDF);
+  }
+
+  if (reportModal) {
+    reportModal.addEventListener("click", e => {
+      if (e.target === reportModal) {
+        reportModal.style.display = "none";
+      }
+    });
+  }
+
+});
+
+
+
+
+
+
+
+
+</script>
+
+
+<div id="metaModal" style="
+  display:none;
+  position:fixed;
+  top:0; left:0;
+  width:100%; height:100%;
+  background:rgba(0,0,0,0.5);
+  z-index:3000;
+">
+
+  <div style="
+    background:white;
+    width:70%;
+    max-width:900px;
+    height:80%;
+    margin:5% auto;
+    padding:20px;
+    overflow-y:auto;
+    box-shadow:0 0 10px rgba(0,0,0,.4);
+  ">
+
+    <h2>Digital Twin Piloto – Metodologia</h2>
+
+    <h3>1. Use case</h3>
+    <p>
+      Este Digital Twin foi desenvolvido como um instrumento exploratório
+      de apoio à decisão, permitindo testar cenários alternativos de
+      intervenção urbana num território delimitado.
+    </p>
+    <p>
+      O objetivo não é prever o futuro, mas comparar efeitos relativos
+      de políticas públicas, como aumento de áreas verdes, densificação,
+      pressão energética ou ganhos de eficiência.
+    </p>
+
+    <h3>2. Índices utilizados</h3>
+
+    <p><b>IVS – Índice de Verde e Sombra</b><br>
+    Mede a disponibilidade relativa de áreas verdes e potencial de
+    sombreamento. Valores mais elevados indicam maior conforto ambiental.</p>
+
+    <p><b>IEC – Índice de Exposição ao Calor</b><br>
+    Representa a vulnerabilidade do território a fenómenos de calor urbano,
+    considerando fatores morfológicos e ambientais.</p>
+
+    <p><b>IPE – Índice de Pressão Energética</b><br>
+    Reflete a intensidade relativa de consumo e carga energética local
+    associada a edifícios, mobilidade e equipamentos.</p>
+
+    <p><b>Índice Composto de Prioridade</b><br>
+    Métrica sintética que agrega os três índices anteriores para apoiar
+    a identificação de áreas prioritárias de intervenção.</p>
+
+    <h3>3. Cálculo</h3>
+
+    <p>Os indicadores são normalizados entre 0 e 1.</p>
+
+    <pre>
+Índice Composto =
+(1 − IVS + IEC + IPE) / 3
+    </pre>
+
+    <p>
+      Os simuladores aplicam variações percentuais aos valores de base,
+      permitindo analisar tendências relativas entre cenários.
+    </p>
+
+<h3>3.1 Afinação de coeficientes do Projeto</h3>
+
+<p>
+O <b>Projeto – Entrecampos</b> é modelado como um choque exógeno ao território,
+representando uma operação urbanística de média/grande escala, com impactos
+estruturais sobre o funcionamento urbano local.
+</p>
+
+<p>
+Os coeficientes aplicados aos indicadores resultam de uma leitura urbanística
+qualitativa e exploratória, tendo em conta:
+</p>
+
+<ul>
+  <li>a intensificação da ocupação do solo;</li>
+  <li>a redução relativa de áreas verdes e permeáveis;</li>
+  <li>o aumento da massa edificada e da inércia térmica;</li>
+  <li>a geração de tráfego, atividade económica e consumo energético;</li>
+  <li>efeitos indiretos sobre conforto térmico e pressão ambiental.</li>
+</ul>
+
+<p>
+Com base nestes pressupostos, o Projeto afeta os indicadores da seguinte forma:
+</p>
+
+<ul>
+  <li>
+    <b>IVS – Verde &amp; Sombra:</b><br>
+    redução moderada do valor de referência, refletindo a diminuição de verde
+    biológico efetivo, apesar do aumento de sombra construída.
+  </li>
+
+  <li>
+    <b>IEC – Exposição ao Calor:</b><br>
+    aumento do valor de referência, associado à maior densidade edificada,
+    tráfego e superfícies impermeáveis.
+  </li>
+
+  <li>
+    <b>IPE – Pressão Energética:</b><br>
+    aumento significativo do valor de referência, refletindo a introdução de
+    comércio, escritórios, habitação e mobilidade induzida.
+  </li>
+</ul>
+
+<p>
+Os coeficientes utilizados são intencionalmente simplificados e não têm caráter
+preditivo. O seu objetivo é permitir a comparação relativa entre cenários e a
+avaliação do papel de políticas mitigadoras (ex.: aumento de verde, eficiência
+urbana, redução de pressão energética).
+</p>
+
+
+    <h3>4. Limitações</h3>
+    <ul>
+      <li>Modelo simplificado e não preditivo.</li>
+      <li>Pesos e coeficientes dependem de opções de política pública.</li>
+      <li>Não incorpora dinâmicas temporais.</li>
+      <li>Resultados devem ser interpretados de forma comparativa.</li>
+    </ul>
+
+    <hr>
+
+    <button id="closeMeta" style="padding:8px 12px;">
+      Fechar
+    </button>
+
+  </div>
+</div>
+
+
+
+<div id="reportModal" style="
+  display:none;
+  position:fixed;
+  top:0; left:0;
+  width:100%; height:100%;
+  background:rgba(0,0,0,0.5);
+  z-index:3000;
+">
+
+<div style="
+  background:white;
+  width:65%;
+  max-width:800px;
+  height:80vh;
+  margin:6% auto;
+  padding:20px;
+  overflow-y:auto;
+  box-shadow:0 0 10px rgba(0,0,0,.4);
+">
+
+
+    <h2>Relatório de Simulação</h2>
+
+    <div id="reportContent"></div>
+
+<hr>
+
+<button id="exportPDF" style="padding:8px 12px; margin-right:10px;">
+  📄 Exportar PDF
+</button>
+
+<button id="closeReport" style="padding:8px 12px;">
+  Fechar
+</button>
+
+
+  </div>
+</div>
+
+<div id="userProjectModal" style="
+  display:none;
+  position:fixed;
+  top:0; left:0;
+  width:100%; height:100%;
+  background:rgba(0,0,0,0.5);
+  z-index:3500;
+">
+
+  <div style="
+    background:white;
+    width:420px;
+    margin:10% auto;
+    padding:20px;
+    box-shadow:0 0 10px rgba(0,0,0,.4);
+  ">
+
+    <h3>Projeto do Utilizador</h3>
+
+<p>Seleciona a intervenção a aplicar neste local:</p>
+
+<b>⚡ Mobilidade elétrica</b><br>
+<label>
+  <input type="radio" name="userIntervention" value="ev_normal" checked>
+  🔌 Carregador EV normal
+</label><br>
+
+<label>
+  <input type="radio" name="userIntervention" value="ev_fast">
+  ⚡ Carregador EV rápido
+</label>
+
+<hr>
+
+<b>🌳 Natureza urbana</b><br>
+<label>
+  <input type="radio" name="userIntervention" value="tree_small">
+  Árvore – pequeno porte
+</label><br>
+
+<label>
+  <input type="radio" name="userIntervention" value="tree_medium">
+  Árvore – médio porte
+</label><br>
+
+<label>
+  <input type="radio" name="userIntervention" value="tree_large">
+  Árvore – grande porte
+</label>
+
+<hr>
+
+<b>☀️ Energia</b><br>
+<label>
+  <input type="radio" name="userIntervention" value="pv">
+  Instalação fotovoltaica
+</label>
+
+<hr>
+
+<b>🏗️ Edificação</b><br>
+<label>
+  Área (m²):
+  <input type="number" id="buildingArea" value="1000" min="100">
+</label><br>
+
+<label>
+  <input type="radio" name="userIntervention" value="building">
+  Aplicar edificação
+</label>
+
+
+    <hr>
+
+    <button id="confirmUserProject">Aplicar</button>
+    <button id="cancelUserProject">Cancelar</button>
+
+  </div>
+</div>
+
+
+
+</body>
+</html>
